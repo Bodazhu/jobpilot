@@ -59,28 +59,58 @@
 
       <!-- Why this job (Explain feature) -->
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5">
-        <h2 class="font-bold text-blue-800 text-base mb-3 flex items-center gap-2">
+        <h2 class="font-bold text-blue-800 text-base mb-4 flex items-center gap-2">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
           </svg>
           Why This Job Was Recommended
         </h2>
-        <div class="space-y-2 text-sm text-blue-700">
-          {% if matched_skills %}
-          <p>✅ <strong>Skill matches:</strong> {{ matched_skills | join(', ') }}</p>
-          {% endif %}
-          {% if profile.target_roles and profile.target_roles.lower() in job.title.lower() %}
-          <p>✅ <strong>Title match:</strong> "{{ job.title }}" aligns with your target "{{ profile.target_roles }}"</p>
-          {% endif %}
-          {% if profile.location and (profile.location.lower() in (job.location or '').lower() or 'remote' in (job.location or '').lower()) %}
-          <p>✅ <strong>Location:</strong> {{ job.location }} matches your preference</p>
-          {% endif %}
-          {% if job.salary_min and profile.salary_min and job.salary_min >= profile.salary_min * 0.9 %}
-          <p>✅ <strong>Salary:</strong> ${{ "{:,.0f}".format(job.salary_min) }} meets your minimum of ${{ "{:,.0f}".format(profile.salary_min) }}</p>
-          {% endif %}
-          {% if unmatched_skills %}
-          <p class="text-blue-500">⚠ <strong>Skills to develop:</strong> {{ unmatched_skills[:5] | join(', ') }}</p>
-          {% endif %}
+
+        <!-- Score breakdown bars -->
+        <div class="grid grid-cols-2 gap-3 mb-4">
+          <div class="bg-white rounded-lg p-3 border border-blue-100">
+            <div class="flex justify-between text-xs text-slate-500 mb-1">
+              <span class="font-medium">Semantic Match</span>
+              <span class="font-bold text-blue-600">{{ dense_score }}%</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ dense_score }}%"></div></div>
+            <p class="text-xs text-slate-400 mt-1">Dense embedding similarity (BAAI/bge-small-en-v1.5)</p>
+          </div>
+          <div class="bg-white rounded-lg p-3 border border-blue-100">
+            <div class="flex justify-between text-xs text-slate-500 mb-1">
+              <span class="font-medium">Keyword Match</span>
+              <span class="font-bold text-blue-600">{{ bm25_score }}%</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ bm25_score }}%"></div></div>
+            <p class="text-xs text-slate-400 mt-1">BM25 term-frequency overlap with your query</p>
+          </div>
+          <div class="bg-white rounded-lg p-3 border border-blue-100">
+            <div class="flex justify-between text-xs text-slate-500 mb-1">
+              <span class="font-medium">Skill Overlap</span>
+              <span class="font-bold text-blue-600">{{ skill_score }}%</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ skill_score }}%"></div></div>
+            <p class="text-xs text-slate-400 mt-1">Your skills found in job description text</p>
+          </div>
+          <div class="bg-blue-100 rounded-lg p-3 border border-blue-200">
+            <div class="flex justify-between text-xs text-slate-600 mb-1">
+              <span class="font-bold">Overall Score</span>
+              <span class="font-bold text-blue-700">{{ overall_score }}%</span>
+            </div>
+            <div class="score-bar"><div class="score-fill" style="width:{{ overall_score }}%"></div></div>
+            <p class="text-xs text-slate-500 mt-1">0.7 × semantic + 0.3 × keyword + 0.1 × skills</p>
+          </div>
+        </div>
+
+        <!-- Explanation bullets -->
+        <div class="space-y-1.5 text-sm">
+          {% for type, point in explanation_points %}
+            {% if type == 'match' %}
+            <p class="text-blue-700">✅ {{ point }}</p>
+            {% else %}
+            <p class="text-slate-500">⚠ {{ point }}</p>
+            {% endif %}
+          {% endfor %}
         </div>
       </div>
 

@@ -233,23 +233,119 @@ def job_detail(job_id):
     if user_sess and user_sess.profile_json:
         profile = json.loads(user_sess.profile_json)
 
-    # Find matched skills
-    user_skills = profile.get("skills", "")
-    import re
+    import re as _re
+    user_skills_raw = profile.get("skills", "")
+    # Individual skill tokens (handles "scikit-learn", "PyTorch", etc.)
+    user_skill_tokens = set(_re.findall(r"[\w\-]+", user_skills_raw.lower()))
+    # Full skill phrases (for multi-word matches)
+    user_skill_phrases = [s.strip().lower() for s in user_skills_raw.split(",") if s.strip()]
+
+    # --- Match against description text (works even when structured skills are broad categories) ---
+    desc_lower = (job.description or "").lower()
+    title_lower = (job.title or "").lower()
+    combined_text = title_lower + " " + desc_lower
+
+    # Check full description (not just first 300 chars) for skill mentions
+    full_desc = (job.description or "").lower()
+    full_combined = title_lower + " " + full_desc
+
+    STOP = {"the","and","for","with","you","are","our","not","this","that",
+            "have","will","from","data","work","team","role","year","years",
+            "experience","strong","using","able","help","also","well"}
+
+    # Full phrase matches (e.g. "machine learning", "scikit-learn")
+    desc_matched = [s for s in user_skill_phrases if s in full_combined]
+
+    # Token-level matches for when phrases don't appear verbatim
+    token_matched = [t for t in user_skill_tokens
+                     if len(t) > 3 and t in full_combined and t not in STOP]
+
+    # Prefer phrase matches; supplement with tokens, deduplicate
+    # Remove tokens that are substrings of already-matched phrases
+    clean_tokens = [t for t in token_matched
+                    if not any(t in phrase for phrase in desc_matched)]
+    matched_skills = list(dict.fromkeys(desc_matched + clean_tokens))[:8]
+
+    # --- Compute actual ranking scores for this job ---
+    dense_score, bm25_score, skill_score = 0.0, 0.0, 0.0
     try:
-        job_skills = json.loads(job.skills or "[]")
+        from pipeline.embed import _faiss_index, bm25_search
+        from pipeline.feedback import get_adapted_vector
+
+        query_vec = get_adapted_vector(sid)
+        if query_vec is None and user_sess and user_sess.query_vector:
+            query_vec = np.array(json.loads(user_sess.query_vector), dtype=np.float32)
+
+        if query_vec is not None:
+            # Dense score: reconstruct this job's vector directly from FAISS index
+            # (avoids top-k search limit — works for any job in the index)
+            if job.faiss_idx is not None and _faiss_index is not None:
+                job_vec = _faiss_index.reconstruct(int(job.faiss_idx))
+                raw_dense = float(np.dot(query_vec, job_vec))
+                # Get top score for normalisation (search k=1)
+                top_scores, _ = _faiss_index.search(query_vec.reshape(1, -1), 1)
+                top_dense = float(top_scores[0][0]) if top_scores[0][0] > 0 else 1.0
+                dense_score = min(1.0, raw_dense / top_dense)
+
+            # BM25 score: search wide to catch this job if it has any overlap
+            query_text = f"{profile.get('target_roles', '')} {user_skills_raw}"
+            bm25_results = bm25_search(query_text, k=8280)
+            bm25_map = {jid: s for jid, s in bm25_results}
+            raw_bm25 = bm25_map.get(job.id, 0.0)
+            top_bm25 = max(bm25_map.values()) if bm25_map else 1.0
+            bm25_score = min(1.0, raw_bm25 / top_bm25) if top_bm25 > 0 else 0.0
+
+        # Skill overlap score
+        skill_score = min(1.0, len(matched_skills) / max(len(user_skill_phrases), 1))
+    except Exception as e:
+        logger.debug(f"Score computation error: {e}")
+
+    # Overall match score (same formula as ranking pipeline)
+    overall = min(1.0, 0.3 * bm25_score + 0.7 * dense_score + 0.1 * skill_score)
+
+    # Build explanation bullets
+    explanation_points = []
+    if matched_skills:
+        explanation_points.append(("match", f"Your skills appear in this job: {', '.join(matched_skills[:6])}"))
+    if dense_score > 0.6:
+        explanation_points.append(("match", f"Strong semantic similarity to your profile ({dense_score*100:.0f}% of top match)"))
+    elif dense_score > 0.3:
+        explanation_points.append(("match", f"Good semantic similarity to your profile ({dense_score*100:.0f}%)"))
+    if bm25_score > 0.5:
+        explanation_points.append(("match", f"High keyword overlap with your target roles and skills ({bm25_score*100:.0f}%)"))
+    target_roles = profile.get("target_roles", "")
+    if target_roles:
+        role_words = [w.strip().lower() for w in target_roles.split(",")]
+        if any(w in title_lower for w in role_words if len(w) > 3):
+            explanation_points.append(("match", f'Job title aligns with your target role "{job.title}"'))
+    loc_pref = profile.get("location", "").lower()
+    if loc_pref and loc_pref not in ("any", "anywhere", ""):
+        if loc_pref in (job.location or "").lower() or "remote" in (job.location or "").lower():
+            explanation_points.append(("match", f"Location matches your preference ({job.location})"))
+    if job.salary_min and profile.get("salary_min") and job.salary_min >= float(profile["salary_min"]) * 0.9:
+        explanation_points.append(("match", f"Salary ${job.salary_min:,.0f} meets your minimum"))
+    if not matched_skills:
+        explanation_points.append(("gap", "No direct skill keyword matches found in job description — ranking driven by semantic similarity"))
+
+    # Skills to develop: from structured categories that aren't user skills
+    try:
+        structured_skills = json.loads(job.skills or "[]")
     except Exception:
-        job_skills = []
-    user_skill_set = set(re.findall(r"\w+", user_skills.lower()))
-    matched = [s for s in job_skills if s.lower() in user_skill_set]
-    unmatched = [s for s in job_skills if s.lower() not in user_skill_set]
+        structured_skills = []
+    gaps = [s for s in structured_skills
+            if not any(t in s.lower() for t in user_skill_tokens)][:5]
 
     return render_template(
         "job_detail.html",
         job=job,
         profile=profile,
-        matched_skills=matched[:10],
-        unmatched_skills=unmatched[:10],
+        matched_skills=matched_skills[:8],
+        unmatched_skills=gaps,
+        dense_score=round(dense_score * 100),
+        bm25_score=round(bm25_score * 100),
+        skill_score=round(skill_score * 100),
+        overall_score=round(overall * 100),
+        explanation_points=explanation_points,
     )
 
 
