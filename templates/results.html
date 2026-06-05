@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}My Matches — JobPilot{% endblock %}
+{% block content %}
+
+<div class="max-w-7xl mx-auto px-4 py-8" x-data="feedbackApp()">
+
+  <!-- Header row -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-slate-800">Your Top Matches</h1>
+      <p class="text-slate-500 text-sm mt-1">
+        Ranked by hybrid BM25 + dense embedding score ·
+        {% if profile.target_roles %}Searching for: <span class="text-blue-600 font-medium">{{ profile.target_roles }}</span>{% endif %}
+      </p>
+    </div>
+    <div class="flex gap-2">
+      <a href="/download_jobs"
+         class="flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 text-sm font-medium px-4 py-2 rounded-lg hover:bg-slate-50 transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+        </svg>
+        Download CSV
+      </a>
+      <a href="/"
+         class="flex items-center gap-1.5 gradient-brand text-white text-sm font-medium px-4 py-2 rounded-lg hover:opacity-90 transition">
+        ← New Search
+      </a>
+    </div>
+  </div>
+
+  <!-- Adaptive Learning Banner -->
+  {% if round_num > 0 %}
+  <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4 mb-6 flex items-center gap-4">
+    <div class="bg-blue-100 rounded-full p-2">
+      <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+      </svg>
+    </div>
+    <div class="flex-1">
+      <p class="text-blue-800 font-semibold text-sm">Rocchio Feedback Active — Round {{ round_num }}</p>
+      <p class="text-blue-600 text-xs mt-0.5">
+        Your query vector has been updated based on your feedback.
+        {% if metrics.improvement > 0 %}
+          NDCG@10 improved by <strong>+{{ "%.3f"|format(metrics.improvement) }}</strong>
+          ({{ "%.3f"|format(metrics.before_ndcg) }} → {{ "%.3f"|format(metrics.after_ndcg) }})
+        {% endif %}
+      </p>
+    </div>
+    <button @click="$refs.metricsPanel.classList.toggle('hidden')"
+            class="text-blue-500 text-xs hover:text-blue-700 whitespace-nowrap">View metrics</button>
+  </div>
+  <div x-ref="metricsPanel" class="hidden bg-white border border-slate-200 rounded-xl p-4 mb-4 text-sm">
+    <p class="font-semibold text-slate-700 mb-3">Adaptive Learning Metrics (Rocchio Algorithm)</p>
+    <div class="grid grid-cols-4 gap-4">
+      <div class="text-center"><p class="text-2xl font-bold text-blue-600">{{ round_num }}</p><p class="text-slate-500 text-xs">Feedback Rounds</p></div>
+      <div class="text-center"><p class="text-2xl font-bold text-slate-600">{{ "%.3f"|format(metrics.before_ndcg) }}</p><p class="text-slate-500 text-xs">NDCG@10 Before</p></div>
+      <div class="text-center"><p class="text-2xl font-bold text-blue-600">{{ "%.3f"|format(metrics.after_ndcg) }}</p><p class="text-slate-500 text-xs">NDCG@10 After</p></div>
+      <div class="text-center">
+        <p class="text-2xl font-bold {% if metrics.improvement > 0 %}text-green-600{% else %}text-slate-400{% endif %}">
+          {% if metrics.improvement > 0 %}+{% endif %}{{ "%.3f"|format(metrics.improvement) }}
+        </p>
+        <p class="text-slate-500 text-xs">Improvement</p>
+      </div>
+    </div>
+    <p class="text-slate-400 text-xs mt-3">
+      Formula: q_new = α·q_orig + β·mean(accepted) − γ·mean(rejected) &nbsp;|&nbsp; α=1.0, β=0.8, γ=0.1
+    </p>
+  </div>
+  {% endif %}
+
+  <!-- Results grid -->
+  <div class="space-y-4">
+    {% if results %}
+      {% for r in results %}
+      {% set j = r.job %}
+      {% set fb = feedback_map.get(j.id, None) %}
+      <div class="bg-white rounded-xl border card-hover overflow-hidden
+                  {% if fb == 1 %}border-green-300 bg-green-50/20{% elif fb == -1 %}border-red-200 opacity-60{% else %}border-slate-200{% endif %}"
+           id="job-{{ j.id }}">
+        <div class="p-5">
+          <div class="flex items-start justify-between gap-4">
+            <!-- Left: Job info -->
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-1">
+                <a href="/job/{{ j.id }}" class="text-lg font-bold text-slate-800 hover:text-blue-600 transition truncate">
+                  {{ j.title }}
+                </a>
+                {% if fb == 1 %}<span class="tag bg-green-100 text-green-700 shrink-0">✓ Saved</span>{% endif %}
+              </div>
+              <p class="text-slate-600 text-sm">
+                <span class="font-medium">{{ j.company or "Company" }}</span>
+                {% if j.location %} · <span class="text-slate-500">{{ j.location }}</span>{% endif %}
+              </p>
+              {% if j.salary_min or j.salary_max %}
+              <p class="text-slate-500 text-sm mt-1">
+                💰
+                {% if j.salary_min %}${{ "{:,.0f}".format(j.salary_min) }}{% endif %}
+                {% if j.salary_min and j.salary_max %} – {% endif %}
+                {% if j.salary_max %}${{ "{:,.0f}".format(j.salary_max) }}{% endif %}
+                {{ j.salary_currency or "USD" }} / year
+              </p>
+              {% endif %}
+
+              <!-- Matched skills -->
+              {% if r.matched_skills %}
+              <div class="flex flex-wrap gap-1.5 mt-2">
+                {% for skill in r.matched_skills[:6] %}
+                <span class="tag tag-skill">{{ skill }}</span>
+                {% endfor %}
+              </div>
+              {% endif %}
+
+              <!-- Explanation -->
+              <p class="text-slate-400 text-xs mt-2 italic">{{ r.explanation }}</p>
+            </div>
+
+            <!-- Right: Score + actions -->
+            <div class="flex flex-col items-end gap-3 shrink-0">
+              <!-- Match score -->
+              <div class="text-right">
+                <p class="text-2xl font-bold text-blue-600">{{ (r.score * 100) | int }}%</p>
+                <p class="text-slate-400 text-xs">match</p>
+              </div>
+
+              <!-- Score breakdown -->
+              <div class="w-32 text-xs text-slate-500 space-y-1">
+                <div>
+                  <div class="flex justify-between mb-0.5"><span>Semantic</span><span>{{ (r.dense_score * 100) | int }}%</span></div>
+                  <div class="score-bar"><div class="score-fill" style="width:{{ (r.dense_score * 100) | int }}%"></div></div>
+                </div>
+                <div>
+                  <div class="flex justify-between mb-0.5"><span>Keywords</span><span>{{ (r.bm25_score * 100) | int }}%</span></div>
+                  <div class="score-bar"><div class="score-fill" style="width:{{ (r.bm25_score * 100) | int }}%"></div></div>
+                </div>
+                <div>
+                  <div class="flex justify-between mb-0.5"><span>Skills</span><span>{{ (r.skill_score * 100) | int }}%</span></div>
+                  <div class="score-bar"><div class="score-fill" style="width:{{ (r.skill_score * 100) | int }}%"></div></div>
+                </div>
+              </div>
+
+              <!-- Action buttons -->
+              <div class="flex gap-1.5">
+                <button @click="feedback({{ j.id }}, 1)"
+                        :class="feedbackState[{{ j.id }}] === 1 ? 'bg-green-500 text-white' : 'bg-white text-green-600 border border-green-300 hover:bg-green-50'"
+                        class="rounded-lg px-2.5 py-1.5 text-xs font-medium transition" title="Accept">
+                  ✓
+                </button>
+                <button @click="feedback({{ j.id }}, 0)"
+                        :class="feedbackState[{{ j.id }}] === 0 && feedbackState[{{ j.id }}] !== undefined ? 'bg-yellow-500 text-white' : 'bg-white text-yellow-600 border border-yellow-300 hover:bg-yellow-50'"
+                        class="rounded-lg px-2.5 py-1.5 text-xs font-medium transition" title="Skip">
+                  –
+                </button>
+                <button @click="feedback({{ j.id }}, -1)"
+                        :class="feedbackState[{{ j.id }}] === -1 ? 'bg-red-500 text-white' : 'bg-white text-red-500 border border-red-300 hover:bg-red-50'"
+                        class="rounded-lg px-2.5 py-1.5 text-xs font-medium transition" title="Reject">
+                  ✕
+                </button>
+              </div>
+
+              <!-- Links -->
+              <div class="flex gap-2 text-xs">
+                <a href="/job/{{ j.id }}" class="text-blue-500 hover:underline">Details</a>
+                <a href="/generate_resume/{{ j.id }}" class="text-blue-500 hover:underline">Resume ↗</a>
+                {% if j.url %}<a href="{{ j.url }}" target="_blank" class="text-slate-400 hover:underline">Apply →</a>{% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="bg-white rounded-xl border border-slate-200 p-12 text-center">
+        <p class="text-slate-400 text-lg mb-2">No matches found</p>
+        <p class="text-slate-400 text-sm">Try relaxing your filters or broadening your target roles.</p>
+        <a href="/" class="mt-4 inline-block text-blue-500 hover:underline text-sm">← Start over</a>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- Refresh results after feedback -->
+  <div x-show="pendingRefresh" x-cloak class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50">
+    <div class="bg-blue-600 text-white rounded-full px-6 py-3 shadow-xl flex items-center gap-3 text-sm font-medium">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+      </svg>
+      Rocchio update applied —
+      <a href="/results" class="underline font-bold">Refresh results</a>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function feedbackApp() {
+  return {
+    feedbackState: {{ feedback_map | tojson }},
+    pendingRefresh: false,
+
+    async feedback(jobId, signal) {
+      const prev = this.feedbackState[jobId];
+      this.feedbackState[jobId] = signal;
+
+      const resp = await fetch('/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: jobId, signal: signal })
+      });
+
+      if (resp.ok && signal !== 0) {
+        this.pendingRefresh = true;
+      }
+    }
+  };
+}
+</script>
+
+{% endblock %}

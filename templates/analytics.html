@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Analytics — JobPilot{% endblock %}
+{% block content %}
+
+<div class="max-w-6xl mx-auto px-4 py-8">
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-slate-800">Job Market Analytics</h1>
+    <p class="text-slate-500 text-sm mt-1">Aggregate insights from {{ "{:,}".format(total_jobs) }} job postings</p>
+  </div>
+
+  <!-- Stats row -->
+  <div class="grid grid-cols-4 gap-4 mb-8">
+    <div class="bg-white rounded-xl border border-slate-200 p-5 text-center">
+      <p class="text-3xl font-bold text-blue-600">{{ "{:,}".format(total_jobs) }}</p>
+      <p class="text-slate-500 text-sm mt-1">Total Jobs</p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-5 text-center">
+      <p class="text-3xl font-bold text-indigo-600">{{ top_skills | length }}</p>
+      <p class="text-slate-500 text-sm mt-1">Unique Skills Tracked</p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-5 text-center">
+      <p class="text-3xl font-bold text-emerald-600">{{ loc_counts | length }}</p>
+      <p class="text-slate-500 text-sm mt-1">Locations</p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-5 text-center">
+      <p class="text-3xl font-bold text-amber-600">{{ stream_logs | length }}</p>
+      <p class="text-slate-500 text-sm mt-1">Stream Runs</p>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-2 gap-6 mb-6">
+
+    <!-- Top Skills Chart -->
+    <div class="bg-white rounded-xl border border-slate-200 p-6">
+      <h2 class="font-bold text-slate-800 mb-4">Top 20 In-Demand Skills</h2>
+      <canvas id="skillsChart" height="280"></canvas>
+    </div>
+
+    <!-- Salary Distribution -->
+    <div class="bg-white rounded-xl border border-slate-200 p-6">
+      <h2 class="font-bold text-slate-800 mb-4">Salary Distribution (USD/year)</h2>
+      <canvas id="salaryChart" height="280"></canvas>
+    </div>
+
+  </div>
+
+  <div class="grid grid-cols-2 gap-6 mb-6">
+
+    <!-- Top Locations -->
+    <div class="bg-white rounded-xl border border-slate-200 p-6">
+      <h2 class="font-bold text-slate-800 mb-4">Top Hiring Locations</h2>
+      <canvas id="locationChart" height="260"></canvas>
+    </div>
+
+    <!-- Stream Logs -->
+    <div class="bg-white rounded-xl border border-slate-200 p-6">
+      <h2 class="font-bold text-slate-800 mb-4">Data Pipeline Activity</h2>
+      {% if stream_logs %}
+      <div class="space-y-2">
+        {% for log in stream_logs %}
+        <div class="flex items-center text-sm border-b border-slate-100 pb-2 last:border-0">
+          <span class="w-16 font-mono text-xs bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 mr-3">{{ log.source | upper }}</span>
+          <div class="flex-1 grid grid-cols-3 gap-2 text-slate-600">
+            <span><span class="text-green-600 font-semibold">+{{ log.ingested }}</span> new</span>
+            <span><span class="text-amber-600 font-semibold">{{ log.duplicates }}</span> dupes</span>
+            <span class="text-slate-400">{{ log.ran_at.strftime('%b %d %H:%M') }}</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-slate-400 text-sm">No streaming runs yet. Configure Adzuna API to enable live ingestion.</p>
+      {% endif %}
+
+      <div class="mt-4 pt-4 border-t border-slate-100">
+        <button onclick="triggerStream()"
+                class="text-sm text-blue-600 hover:text-blue-800 font-medium">
+          ▶ Trigger stream fetch now
+        </button>
+        <span id="streamStatus" class="text-slate-400 text-xs ml-3"></span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Techniques info box -->
+  <div class="bg-gradient-to-r from-slate-800 to-blue-900 rounded-xl p-6 text-white">
+    <h2 class="font-bold text-lg mb-3">BAX-423 Techniques Used</h2>
+    <div class="grid grid-cols-2 gap-6 text-sm">
+      <div>
+        <p class="font-semibold text-blue-200 mb-1">Technique 1 — BM25 (Sparse Retrieval)</p>
+        <p class="text-slate-300">Classic probabilistic ranking model from the IR literature. Scores jobs by term frequency and inverse document frequency against the user's query. Fast, interpretable, strong for keyword-heavy matches.</p>
+      </div>
+      <div>
+        <p class="font-semibold text-blue-200 mb-1">Technique 2 — Sentence-BERT + FAISS (Dense Retrieval)</p>
+        <p class="text-slate-300">Maps jobs and user profiles to 384-dim dense vectors using <code class="text-blue-200">all-MiniLM-L6-v2</code>. FAISS IndexFlatIP enables sub-second approximate nearest-neighbour search over 50k+ jobs.</p>
+      </div>
+      <div>
+        <p class="font-semibold text-blue-200 mb-1">Adaptive Learning — Rocchio Algorithm</p>
+        <p class="text-slate-300">Relevance feedback in embedding space: q_new = α·q_orig + β·mean(accepted) − γ·mean(rejected). NDCG@10 improves measurably over rounds of feedback.</p>
+      </div>
+      <div>
+        <p class="font-semibold text-blue-200 mb-1">Hybrid Ranking Pipeline</p>
+        <p class="text-slate-300">Hard filters → BM25 candidate generation → FAISS dense re-rank → skill-overlap scoring. Combines the vocabulary coverage of BM25 with the semantic understanding of dense embeddings.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Skills chart
+const skillLabels = {{ top_skills | map(attribute=0) | list | tojson }};
+const skillValues = {{ top_skills | map(attribute=1) | list | tojson }};
+new Chart(document.getElementById('skillsChart'), {
+  type: 'bar',
+  data: {
+    labels: skillLabels,
+    datasets: [{ label: 'Job Count', data: skillValues,
+      backgroundColor: 'rgba(37,99,235,0.8)', borderRadius: 4 }]
+  },
+  options: { indexAxis: 'y', plugins: { legend: { display: false } },
+    scales: { x: { grid: { color: '#f1f5f9' } }, y: { ticks: { font: { size: 11 } } } } }
+});
+
+// Salary chart
+const salaryLabels = {{ salary_buckets.keys() | list | tojson }};
+const salaryValues = {{ salary_buckets.values() | list | tojson }};
+new Chart(document.getElementById('salaryChart'), {
+  type: 'bar',
+  data: {
+    labels: salaryLabels,
+    datasets: [{ label: 'Jobs', data: salaryValues,
+      backgroundColor: ['#dbeafe','#bfdbfe','#93c5fd','#60a5fa','#3b82f6','#2563eb'],
+      borderRadius: 6 }]
+  },
+  options: { plugins: { legend: { display: false } },
+    scales: { y: { grid: { color: '#f1f5f9' } } } }
+});
+
+// Locations chart
+const locLabels = {{ loc_counts | map(attribute=0) | list | tojson }};
+const locValues = {{ loc_counts | map(attribute=1) | list | tojson }};
+new Chart(document.getElementById('locationChart'), {
+  type: 'bar',
+  data: {
+    labels: locLabels,
+    datasets: [{ label: 'Jobs', data: locValues,
+      backgroundColor: 'rgba(99,102,241,0.8)', borderRadius: 4 }]
+  },
+  options: { indexAxis: 'y', plugins: { legend: { display: false } },
+    scales: { x: { grid: { color: '#f1f5f9' } }, y: { ticks: { font: { size: 11 } } } } }
+});
+
+async function triggerStream() {
+  const el = document.getElementById('streamStatus');
+  el.textContent = 'Fetching…';
+  const r = await fetch('/admin/stream_now', { method: 'POST' });
+  const d = await r.json();
+  el.textContent = `Done: +${d.ingested} new, ${d.duplicates} dupes`;
+  setTimeout(() => location.reload(), 2000);
+}
+</script>
+
+{% endblock %}

@@ -1,0 +1,8 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.git/
+data/sample_jobs*.csv
+*.egg-info/
+.DS_Store

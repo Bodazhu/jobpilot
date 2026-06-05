@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}JobPilot — Smart Job Matcher{% endblock %}
+{% block content %}
+
+<!-- Hero -->
+<section class="gradient-brand text-white py-16">
+  <div class="max-w-4xl mx-auto px-4 text-center">
+    <h1 class="text-4xl font-bold mb-3 tracking-tight">Find Jobs That Actually Fit</h1>
+    <p class="text-blue-100 text-lg mb-2">Upload your resume. Tell us what you want. Get ranked matches that improve with every click.</p>
+    <p class="text-blue-200 text-sm">
+      {{ "{:,}".format(job_count | default(0) | int) }} job postings indexed ·
+      Powered by BM25 + Sentence-BERT + Rocchio Feedback
+    </p>
+  </div>
+</section>
+
+<!-- Profile Form -->
+<section class="max-w-3xl mx-auto px-4 -mt-8">
+  <div class="bg-white rounded-2xl shadow-xl p-8" x-data="{ loading: false }">
+    <h2 class="text-xl font-bold text-slate-800 mb-6">Build Your Profile</h2>
+
+    <form action="/upload" method="POST" enctype="multipart/form-data"
+          @submit="loading = true" class="space-y-6">
+
+      <!-- Resume Upload -->
+      <div class="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center hover:border-blue-400 transition"
+           x-data="{ filename: '' }"
+           @dragover.prevent @drop.prevent="filename = $event.dataTransfer.files[0]?.name">
+        <input type="file" name="resume" id="resume" accept=".pdf,.txt"
+               class="hidden" @change="filename = $event.target.files[0]?.name" />
+        <label for="resume" class="cursor-pointer">
+          <svg class="w-10 h-10 mx-auto text-blue-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+          <p class="text-slate-600 font-medium" x-text="filename || 'Upload Resume (PDF or TXT)'"></p>
+          <p class="text-slate-400 text-sm mt-1">Click to browse or drag & drop</p>
+        </label>
+      </div>
+
+      <!-- Basic Info -->
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Your Name</label>
+          <input type="text" name="name" placeholder="Alex Johnson"
+                 class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Email</label>
+          <input type="email" name="email" placeholder="alex@example.com"
+                 class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        </div>
+      </div>
+
+      <!-- Target Roles -->
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Target Roles <span class="text-red-400">*</span></label>
+        <input type="text" name="target_roles" placeholder="e.g. ML Engineer, Data Scientist, Applied Scientist"
+               class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+               required />
+        <p class="text-slate-400 text-xs mt-1">Comma-separated. These drive your match score.</p>
+      </div>
+
+      <!-- Skills -->
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Your Skills <span class="text-red-400">*</span></label>
+        <input type="text" name="skills" placeholder="e.g. Python, SQL, PyTorch, scikit-learn, pandas"
+               class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+               required />
+      </div>
+
+      <!-- Location + Salary -->
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Preferred Location</label>
+          <input type="text" name="location" placeholder="e.g. Remote, Bay Area, NYC, Any"
+                 class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Min. Annual Salary (USD)</label>
+          <input type="number" name="salary_min" placeholder="e.g. 140000"
+                 class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        </div>
+      </div>
+
+      <!-- Dealbreakers -->
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Dealbreakers</label>
+        <input type="text" name="dealbreakers" placeholder="e.g. defense, military, unpaid, clearance required"
+               class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        <p class="text-slate-400 text-xs mt-1">Jobs containing these terms will be excluded.</p>
+      </div>
+
+      <!-- Constraint checkboxes -->
+      <div class="bg-slate-50 rounded-xl p-4">
+        <p class="text-sm font-medium text-slate-700 mb-3">Additional Filters</p>
+        <div class="grid grid-cols-2 gap-3 text-sm text-slate-600">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" name="block_senior" class="rounded text-blue-500" />
+            Exclude Senior/Staff/Lead titles
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" name="block_junior" class="rounded text-blue-500" />
+            Exclude Junior/Entry-level titles
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" name="no_contract" class="rounded text-blue-500" />
+            No contract / temp roles
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" name="us_only" class="rounded text-blue-500" />
+            US positions only
+          </label>
+        </div>
+        <div class="mt-3">
+          <label class="block text-sm font-medium text-slate-700 mb-1">Max experience required (years)</label>
+          <input type="number" name="max_experience_years" placeholder="e.g. 2 (leave blank for no limit)"
+                 min="0" max="30"
+                 class="w-40 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        </div>
+      </div>
+
+      <!-- Submit -->
+      <button type="submit"
+              class="w-full gradient-brand text-white font-semibold py-3 rounded-xl hover:opacity-90 transition flex items-center justify-center gap-2"
+              :disabled="loading">
+        <span x-show="!loading">Find My Matches →</span>
+        <span x-show="loading" x-cloak class="flex items-center gap-2">
+          <svg class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+          </svg>
+          Ranking jobs…
+        </span>
+      </button>
+    </form>
+  </div>
+</section>
+
+<!-- Demo Personas -->
+<section class="max-w-3xl mx-auto px-4 mt-12">
+  <h3 class="text-lg font-bold text-slate-700 mb-4">Quick-Fill: Test Personas</h3>
+  <div class="grid grid-cols-2 gap-3 text-sm">
+
+    {% set personas = [
+      {"name": "Aisha (ML Pivoter)", "roles": "ML Engineer, Applied Scientist, Data Scientist",
+       "skills": "Python, SQL, pandas, scikit-learn, PyTorch", "location": "Remote, Bay Area",
+       "salary": "140000", "dealbreakers": "defense, military",
+       "block_senior": true, "max_exp": "4"},
+      {"name": "Marcus (New Grad)", "roles": "Data Analyst, BI Analyst, Junior Data Scientist",
+       "skills": "Python, R, SQL, Tableau, PySpark, NLP", "location": "Any",
+       "salary": "80000", "dealbreakers": "unpaid, contract only",
+       "no_contract": true, "max_exp": "2"},
+      {"name": "Priya (Senior MLOps)", "roles": "ML Platform Engineer, MLOps Engineer, Senior ML Engineer",
+       "skills": "Java, Python, Kubernetes, Kafka, Spark, TensorFlow, AWS",
+       "location": "NYC, Remote", "salary": "200000",
+       "dealbreakers": "junior, startup, small company", "block_junior": true},
+      {"name": "Kenji (Research Visa)", "roles": "Research Scientist, ML Engineer, Applied Scientist, AI Engineer",
+       "skills": "Python, C++, PyTorch, NLP, computer vision, deep learning",
+       "location": "US", "salary": "120000",
+       "dealbreakers": "contract, temp, freelance",
+       "no_contract": true, "us_only": true}
+    ] %}
+
+    {% for p in personas %}
+    <button onclick="fillPersona({{ loop.index0 }})"
+            class="text-left bg-white border border-slate-200 rounded-xl p-3 hover:border-blue-400 hover:bg-blue-50 transition card-hover">
+      <p class="font-semibold text-slate-800">{{ p.name }}</p>
+      <p class="text-slate-500 text-xs mt-1">{{ p.roles[:50] }}…</p>
+    </button>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- Stream Status -->
+{% if stream_logs %}
+<section class="max-w-3xl mx-auto px-4 mt-8 mb-4">
+  <div class="bg-white rounded-xl border border-slate-200 p-4 text-sm">
+    <p class="font-semibold text-slate-700 mb-2">Live Pipeline Status</p>
+    {% for log in stream_logs[:3] %}
+    <div class="flex items-center gap-4 text-slate-500 text-xs py-1 border-b border-slate-100 last:border-0">
+      <span class="w-16 font-medium text-slate-600">{{ log.source | upper }}</span>
+      <span>+{{ log.ingested }} ingested</span>
+      <span>{{ log.duplicates }} dupes removed</span>
+      <span class="ml-auto">{{ log.ran_at.strftime('%b %d %H:%M') }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<script>
+const personas = [
+  { name: "Aisha Johnson", email: "aisha@example.com",
+    roles: "ML Engineer, Applied Scientist, Data Scientist",
+    skills: "Python, SQL, pandas, scikit-learn, PyTorch", location: "Remote, Bay Area",
+    salary: "140000", dealbreakers: "defense, military",
+    block_senior: true, no_contract: false, us_only: false, max_exp: "4" },
+  { name: "Marcus Chen", email: "marcus@example.com",
+    roles: "Data Analyst, BI Analyst, Junior Data Scientist, Analytics Engineer",
+    skills: "Python, R, SQL, Tableau, PySpark, NLP", location: "Any",
+    salary: "80000", dealbreakers: "unpaid, contract only",
+    block_senior: false, no_contract: true, us_only: false, max_exp: "2" },
+  { name: "Priya Sharma", email: "priya@example.com",
+    roles: "ML Platform Engineer, MLOps Engineer, Senior ML Engineer",
+    skills: "Java, Python, Kubernetes, Kafka, Spark, TensorFlow, AWS",
+    location: "NYC, Remote", salary: "200000",
+    dealbreakers: "junior", block_senior: false, block_junior: true,
+    no_contract: false, us_only: false, max_exp: "" },
+  { name: "Kenji Tanaka", email: "kenji@example.com",
+    roles: "Research Scientist, ML Engineer, Applied Scientist, AI Engineer",
+    skills: "Python, C++, PyTorch, NLP, computer vision, deep learning",
+    location: "US", salary: "120000",
+    dealbreakers: "contract, temp, freelance",
+    block_senior: false, no_contract: true, us_only: true, max_exp: "" }
+];
+
+function fillPersona(i) {
+  const p = personas[i];
+  document.querySelector('[name=name]').value = p.name;
+  document.querySelector('[name=email]').value = p.email;
+  document.querySelector('[name=target_roles]').value = p.roles;
+  document.querySelector('[name=skills]').value = p.skills;
+  document.querySelector('[name=location]').value = p.location;
+  document.querySelector('[name=salary_min]').value = p.salary;
+  document.querySelector('[name=dealbreakers]').value = p.dealbreakers;
+  document.querySelector('[name=block_senior]').checked = !!p.block_senior;
+  document.querySelector('[name=block_junior]').checked = !!p.block_junior;
+  document.querySelector('[name=no_contract]').checked = !!p.no_contract;
+  document.querySelector('[name=us_only]').checked = !!p.us_only;
+  document.querySelector('[name=max_experience_years]').value = p.max_exp || "";
+  document.querySelector('#resume').value = "";
+  document.querySelectorAll('[\\@change]'); // reset filename display
+}
+</script>
+
+{% endblock %}
+
+{% macro format_number(n) %}{{ "{:,}".format(n) }}{% endmacro %}

@@ -1,0 +1,17 @@
+venv/
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+.DS_Store
+.claude/
+
+# Keep data files — needed for Render deployment (all under 100MB limit)
+# data/jobpilot.db    <- committed
+# data/jobs.index     <- committed
+# data/faiss_job_ids.npy <- committed
+# data/bm25_corpus.pkl   <- committed
+
+# Exclude large/dev-only files
+data/sample_jobs*.csv
+data/jobpilot_kaggle_10k.csv
