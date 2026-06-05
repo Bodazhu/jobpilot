@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download the embedding model so container starts instantly
+# Pre-download the embedding model at build time so first request is fast
 RUN python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
 
 # Copy application code
@@ -19,12 +19,11 @@ COPY templates/ ./templates/
 COPY static/ ./static/
 COPY scripts/ ./scripts/
 
-# Copy pre-built data (DB + indexes baked into image)
-# Run `python scripts/load_kaggle_data.py` locally first,
-# then `docker build` to embed the indexes into the image.
+# Copy pre-built indexes and database (baked into image, no rebuild needed)
 COPY data/jobpilot.db data/jobs.index data/faiss_job_ids.npy data/bm25_corpus.pkl ./data/
 
 EXPOSE 8080
-ENV PORT=8080 PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--timeout", "120", "app:app"]
+# Use $PORT (Render injects this). Single worker to stay within 512MB free tier.
+CMD gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
