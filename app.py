@@ -94,10 +94,12 @@ def get_or_create_session() -> str:
     if "sid" not in session:
         session["sid"] = str(uuid.uuid4())
     sid = session["sid"]
-    with app.app_context():
-        if not UserSession.query.filter_by(session_id=sid).first():
-            db.session.add(UserSession(session_id=sid))
-            db.session.commit()
+    # No nested app_context — we are already inside a route handler (app context active).
+    # A nested app.app_context() causes db.session.remove() on exit which invalidates
+    # the outer request's scoped DB session.
+    if not UserSession.query.filter_by(session_id=sid).first():
+        db.session.add(UserSession(session_id=sid))
+        db.session.commit()
     return sid
 
 
@@ -384,11 +386,33 @@ def generate_resume(job_id):
     sid = get_or_create_session()
     user_sess = get_user_session(sid)
 
-    if not user_sess or not user_sess.resume_text:
-        flash("Please upload your resume first.", "info")
+    if not user_sess or not user_sess.profile_json:
+        flash("Please complete your profile first.", "info")
         return redirect(url_for("index"))
 
     profile = json.loads(user_sess.profile_json or "{}")
+
+    # Use uploaded resume text if available; otherwise synthesise from profile.
+    # This allows Generate Resume to work when the user filled the form without
+    # uploading a file (e.g. using the persona quick-fill buttons).
+    resume_text = user_sess.resume_text or ""
+    if not resume_text.strip():
+        name = profile.get("name") or "Candidate"
+        skills = profile.get("skills", "")
+        roles = profile.get("target_roles", "")
+        location = profile.get("location", "")
+        resume_text = (
+            f"{name}\n"
+            f"{location}\n\n"
+            f"PROFESSIONAL SUMMARY\n"
+            f"Experienced professional targeting {roles} roles.\n\n"
+            f"CORE SKILLS\n"
+            f"{skills}\n\n"
+            f"EXPERIENCE\n"
+            f"[Experience details not provided — resume generated from profile]\n"
+        )
+        user_sess.resume_text = resume_text
+        db.session.commit()
     import re
     try:
         job_skills = json.loads(job.skills or "[]")
@@ -398,7 +422,7 @@ def generate_resume(job_id):
     matched = [s for s in job_skills if s.lower() in user_skill_set]
 
     tailored = tailor_resume(
-        resume_text=user_sess.resume_text,
+        resume_text=resume_text,
         job=job,
         profile=profile,
         matched_skills=matched,
