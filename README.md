@@ -2,104 +2,135 @@
 **BAX-423 Big Data · Spring 2026 · UC Davis**
 
 **Live Demo:** https://jobpilot-fhpv.onrender.com
+**GitHub:** https://github.com/Bodazhu/jobpilot
 
-## Quick Start (Local)
+---
+
+## Setup and Run (Single Command)
+
+### Prerequisites
+- Python 3.9–3.13
+- Git
+
+### Step 1 — Clone and install
 
 ```bash
-# 1. Create virtual environment
-python -m venv venv && source venv/bin/activate
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Configure environment (optional)
-cp .env.example .env
-# Edit .env to add ANTHROPIC_API_KEY and ADZUNA credentials
-
-# 4. Load the Kaggle dataset and build search indexes
-# Download from: https://www.kaggle.com/datasets/techmap/international-job-postings-september-2021
-python scripts/load_kaggle_data.py --csv data/job_postings.csv --limit 50000
-
-# 5. Run the application
-python app.py
-# → Open http://localhost:8080
+git clone https://github.com/Bodazhu/jobpilot.git
+cd jobpilot
+python3 -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
+pip install --prefer-binary -r requirements.txt
 ```
 
-## Benchmark (BAX-423 Techniques)
+> **Note on PyTorch:** Python 3.13 does not yet have PyTorch wheels.
+> The app uses `fastembed` (ONNX-based) instead of `sentence-transformers`.
+> No PyTorch is required. All other packages install cleanly.
+
+### Step 2 — Load the Kaggle dataset and build search indexes
+
+Place the Kaggle sample CSV at `data/job_postings.csv`, then:
+
+```bash
+python scripts/load_kaggle_data.py --csv data/job_postings.csv --limit 50000
+```
+
+This loads jobs, deduplicates, builds the FAISS index, and builds the BM25 index.
+**One-time setup — takes ~15–30 min depending on CPU (embedding 50k documents).**
+
+A pre-sampled 10k CSV from the required Kaggle dataset is included at
+`data/jobpilot_kaggle_10k.csv`. To use it instead:
+
+```bash
+python scripts/load_kaggle_data.py --csv data/jobpilot_kaggle_10k.csv --limit 10000
+```
+
+### Step 3 — Run the application
+
+```bash
+python app.py
+```
+
+Open **http://localhost:8080** in your browser.
+
+### Single-command shortcut (after indexes are built)
+
+```bash
+source venv/bin/activate && python app.py
+```
+
+---
+
+## Environment Variables (Optional)
+
+Copy `.env.example` to `.env` and fill in:
+
+| Variable | Purpose |
+|---|---|
+| `SECRET_KEY` | Flask session signing (auto-generated default works) |
+| `ANTHROPIC_API_KEY` | Enables Claude-powered resume generation (template fallback without it) |
+| `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` | Enables live job streaming from Adzuna API |
+
+---
+
+## Run Benchmark (BAX-423 Technique Comparison)
 
 ```bash
 python scripts/benchmark.py
-# Prints Recall@10 and NDCG@10 for BM25 vs Dense vs Hybrid
 ```
 
-## Deploy to Google Cloud Run
+Prints Recall@10 and NDCG@10 for BM25 vs Dense vs Hybrid across 3 test profiles.
 
-```bash
-# Build and push image
-gcloud builds submit --tag gcr.io/PROJECT_ID/jobpilot
+---
 
-# Deploy
-gcloud run deploy jobpilot \
-  --image gcr.io/PROJECT_ID/jobpilot \
-  --platform managed \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --memory 4Gi \
-  --cpu 2 \
-  --set-env-vars ANTHROPIC_API_KEY=xxx,ADZUNA_APP_ID=xxx,ADZUNA_APP_KEY=xxx
+## Project Structure
+
+```
+jobpilot/
+├── app.py                    # Flask application (all routes)
+├── config.py                 # Configuration
+├── requirements.txt          # Python dependencies
+├── Dockerfile                # Container for deployment
+├── render.yaml               # Render deployment config
+├── pipeline/
+│   ├── embed.py              # BM25 + FAISS/fastembed embeddings (BAX-423 Technique 1+2)
+│   ├── rank.py               # Multi-stage ranking pipeline + NDCG metric
+│   ├── feedback.py           # Rocchio adaptive learning
+│   ├── ingest.py             # Kaggle + Adzuna data ingestion + deduplication
+│   └── resume_gen.py         # Resume tailoring (Claude API or template)
+├── models/database.py        # SQLAlchemy models (Job, UserSession, Feedback)
+├── templates/                # Jinja2 HTML templates
+├── scripts/
+│   ├── load_kaggle_data.py   # Load dataset + build indexes
+│   └── benchmark.py         # BAX-423 technique benchmark
+└── data/
+    └── jobpilot_kaggle_10k.csv  # 10k real Kaggle job postings (sample)
 ```
 
-**Note:** Mount a persistent volume or use Cloud SQL for the SQLite database in production.
-The FAISS index and BM25 cache must also be available at startup — either bake them into the
-image (after loading data) or mount from Cloud Storage.
+---
 
 ## Architecture
 
 ```
-User uploads resume (PDF) → pdfplumber extracts text
+PDF resume upload → pdfplumber extraction → 384-dim profile vector (BAAI/bge-small-en-v1.5)
 ↓
-Profile encoding → Sentence-BERT all-MiniLM-L6-v2 → 384-dim query vector
+Stage 1: Hard filters (dealbreakers, salary, seniority, location, experience cap)
+Stage 2: BM25 candidate pool (top-500) + FAISS ANN retrieval (top-500)
+Stage 3: Hybrid re-ranking (0.3×BM25 + 0.7×dense + 0.1×skill overlap)
 ↓
-Stage 1: Hard filters (dealbreakers, salary, location, title level)
-Stage 2: BM25 candidate retrieval (top-500) + FAISS ANN retrieval (top-500)
-Stage 3: Hybrid re-ranking: 0.3×BM25 + 0.7×dense + 0.1×skill_overlap
+Rocchio relevance feedback updates query vector from accept/reject signals
 ↓
-User sees ranked results with match scores + explanations
-↓
-User accepts/rejects/skips → Rocchio algorithm updates query vector
-↓
-Re-ranked results with measurably better NDCG@10
-↓
-Generate tailored resume → Claude API (or template fallback)
-↓
-Download CSV of top matches
+Results page with match explanations + CSV download + Generate Resume
 ```
 
-## BAX-423 Techniques
+---
 
-| Technique | Module | Lecture |
+## Six Required Capabilities
+
+| # | Capability | Implementation |
 |---|---|---|
-| BM25 (sparse retrieval) | `pipeline/embed.py` | Text Mining / IR |
-| Sentence-BERT + FAISS (dense retrieval) | `pipeline/embed.py` | NLP / Embeddings |
-| Rocchio relevance feedback (adaptive learning) | `pipeline/feedback.py` | Information Retrieval |
-| Hybrid ranking pipeline | `pipeline/rank.py` | Ranking Systems |
-
-## Core Capabilities
-
-| # | Capability | Status |
-|---|---|---|
-| 1 | Job Data Ingestion & Streaming | ✅ Kaggle CSV + Adzuna API polling |
-| 2 | Profile Intake & Skill Matching | ✅ PDF resume + form |
-| 3 | Embedding-Based Retrieval | ✅ SBERT + FAISS |
-| 4 | Multi-Stage Ranking Pipeline | ✅ Hard filters → BM25 → dense → re-rank |
-| 5 | Adaptive Learning | ✅ Rocchio algorithm, NDCG@10 tracked |
-| 6 | Download Top Jobs | ✅ CSV download |
-
-## Test Personas
-
-| Persona | Key Constraints | Validated |
-|---|---|---|
-| Aisha (ML Pivoter) | No senior titles, no defense | ✅ |
-| Marcus (New Grad) | No 3+ yr req, no contract | ✅ |
-| Priya (Senior MLOps) | No junior, NYC/remote, $200k+ | ✅ |
-| Kenji (Visa-constrained) | US only, no contract, research-focused | ✅ |
+| 1 | Job Data Ingestion & Streaming | Kaggle CSV + Adzuna API polling (APScheduler), hash-based dedup |
+| 2 | Profile Intake & Skill Matching | PDF/text upload via pdfplumber, form for prefs/dealbreakers |
+| 3 | Embedding-Based Retrieval | BAAI/bge-small-en-v1.5 (fastembed/ONNX) + FAISS IndexFlatIP |
+| 4 | Multi-Stage Ranking Pipeline | Hard filters → BM25 → dense re-rank → hybrid score; NDCG@10 |
+| 5 | Adaptive Learning | Rocchio algorithm (q_new = α·q_orig + β·accepted − γ·rejected) |
+| 6 | Download Top Jobs | CSV with title/company/location/salary/URL/description |
